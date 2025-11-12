@@ -15,38 +15,49 @@ router.get('/', async (req, res) => {
   }
 });
 
-// CREATE
-router.post('/', multiUpload, async (req, res) => {
+// Add this helper
+const uploadToCloudinary = async (base64, folder) => {
+  const buffer = Buffer.from(base64, 'base64');
+  return new Promise((resolve, reject) => {
+    cloudinary.uploader.upload_stream(
+      { folder, resource_type: 'auto' },
+      (error, result) => {
+        if (error) reject(error);
+        else resolve(result.secure_url);
+      }
+    ).end(buffer);
+  });
+};
+
+
+// In POST route
+router.post('/', upload.single(), async (req, res) => {
+  const { text, dueDate, completed, imageBase64, imageName, pdfBase64, pdfName } = req.body;
+
+  if (!text) return res.status(400).json({ error: 'Text is required' });
+
+  let imageUrl, pdfUrl;
   try {
-    const { text, dueDate, completed } = req.body;
-    let imageUrl = '', pdfUrl = '';
-
-    if (req.files?.image?.[0]) {
-      imageUrl = await uploadToCloudinary(req.files.image[0].buffer, {
-        resource_type: 'image',
-        allowed_formats: ['jpg', 'jpeg', 'png'],
-      });
+    if (imageBase64) {
+      imageUrl = await uploadToCloudinary(imageBase64, 'todos');
     }
-    if (req.files?.pdf?.[0]) {
-      pdfUrl = await uploadToCloudinary(req.files.pdf[0].buffer, {
-        resource_type: 'raw',
-        allowed_formats: ['pdf'],
-      });
+    if (pdfBase64) {
+      pdfUrl = await uploadToCloudinary(pdfBase64, 'todos');
     }
-
-    const todo = new Todo({
-      text,
-      dueDate: dueDate || null,
-      imageUrl,
-      pdfUrl,
-      completed: completed === 'true',
-    });
-
-    const saved = await todo.save();
-    res.status(201).json(saved);
   } catch (err) {
-    res.status(400).json({ message: err.message });
+    return res.status(500).json({ error: 'File upload failed' });
   }
+
+  const todo = new Todo({
+    text,
+    dueDate: dueDate || null,
+    completed: completed === 'true',
+    imageUrl,
+    pdfUrl,
+  });
+
+  await todo.save();
+  res.status(201).json(todo);
 });
 
 // UPDATE
