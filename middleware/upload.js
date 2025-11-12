@@ -1,7 +1,7 @@
+// middleware/upload.js
 import multer from 'multer';
 
-// Store files in memory → stream directly to Cloudinary
-const storage = multer.memoryStorage();
+const storage = multer.memoryStorage(); // Memory only (Vercel-safe)
 
 const fileFilter = (req, file, cb) => {
   if (file.fieldname === 'image' && file.mimetype.startsWith('image/')) {
@@ -9,17 +9,14 @@ const fileFilter = (req, file, cb) => {
   } else if (file.fieldname === 'pdf' && file.mimetype === 'application/pdf') {
     cb(null, true);
   } else {
+    console.error(`Multer Filter Error: Invalid file type for ${file.fieldname} - ${file.mimetype}`);
     cb(new Error(`Invalid file type for ${file.fieldname}`), false);
   }
 };
 
 const upload = multer({
   storage,
-  limits: {
-    fileSize: (req, file) => {
-      return file.fieldname === 'pdf' ? 10 * 1024 * 1024 : 5 * 1024 * 1024;
-    },
-  },
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
   fileFilter,
 });
 

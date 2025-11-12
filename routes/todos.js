@@ -1,3 +1,4 @@
+// routes/todos.js
 import express from 'express';
 import Todo from '../models/Todo.js';
 import { multiUpload } from '../middleware/upload.js';
@@ -5,62 +6,65 @@ import { uploadToCloudinary, deleteFromCloudinary } from '../utils/cloudinary.js
 
 const router = express.Router();
 
-// GET all
+// GET all (unchanged)
 router.get('/', async (req, res) => {
   try {
     const todos = await Todo.find().sort({ createdAt: -1 });
     res.json(todos);
   } catch (err) {
+    console.error('GET Todos Error:', err);
     res.status(500).json({ message: err.message });
   }
 });
 
-// Add this helper
-const uploadToCloudinary = async (base64, folder) => {
-  const buffer = Buffer.from(base64, 'base64');
-  return new Promise((resolve, reject) => {
-    cloudinary.uploader.upload_stream(
-      { folder, resource_type: 'auto' },
-      (error, result) => {
-        if (error) reject(error);
-        else resolve(result.secure_url);
-      }
-    ).end(buffer);
-  });
-};
-
-
-// In POST route
-router.post('/', upload.single(), async (req, res) => {
-  const { text, dueDate, completed, imageBase64, imageName, pdfBase64, pdfName } = req.body;
-
-  if (!text) return res.status(400).json({ error: 'Text is required' });
-
-  let imageUrl, pdfUrl;
+// POST (Fixed Upload with Logging)
+router.post('/', multiUpload, async (req, res) => {
   try {
-    if (imageBase64) {
-      imageUrl = await uploadToCloudinary(imageBase64, 'todos');
+    console.log('POST Request Files:', req.files); // Log for debug
+    console.log('POST Request Body:', req.body); // Log for debug
+
+    const { text, dueDate, completed } = req.body;
+    if (!text) return res.status(400).json({ message: 'Text is required' });
+
+    let imageUrl = '', pdfUrl = '';
+
+    // Image Upload
+    if (req.files?.image?.[0]) {
+      console.log('Uploading Image:', req.files.image[0].originalname);
+      imageUrl = await uploadToCloudinary(req.files.image[0].buffer, {
+        resource_type: 'image',
+        allowed_formats: ['jpg', 'jpeg', 'png'],
+      });
+      console.log('Image Uploaded URL:', imageUrl);
     }
-    if (pdfBase64) {
-      pdfUrl = await uploadToCloudinary(pdfBase64, 'todos');
+
+    // PDF Upload
+    if (req.files?.pdf?.[0]) {
+      console.log('Uploading PDF:', req.files.pdf[0].originalname);
+      pdfUrl = await uploadToCloudinary(req.files.pdf[0].buffer, {
+        resource_type: 'raw',
+        allowed_formats: ['pdf'],
+      });
+      console.log('PDF Uploaded URL:', pdfUrl);
     }
+
+    const todo = new Todo({
+      text,
+      dueDate: dueDate || null,
+      imageUrl,
+      pdfUrl,
+      completed: completed === 'true',
+    });
+
+    const saved = await todo.save();
+    res.status(201).json(saved);
   } catch (err) {
-    return res.status(500).json({ error: 'File upload failed' });
+    console.error('POST Todos Error:', err);
+    res.status(400).json({ message: err.message });
   }
-
-  const todo = new Todo({
-    text,
-    dueDate: dueDate || null,
-    completed: completed === 'true',
-    imageUrl,
-    pdfUrl,
-  });
-
-  await todo.save();
-  res.status(201).json(todo);
 });
 
-// UPDATE
+// PUT / UPDATE (Similar Fixes)
 router.put('/:id', multiUpload, async (req, res) => {
   try {
     const todo = await Todo.findById(req.params.id);
@@ -70,10 +74,12 @@ router.put('/:id', multiUpload, async (req, res) => {
     todo.dueDate = req.body.dueDate ?? todo.dueDate;
     todo.completed = req.body.completed !== undefined ? req.body.completed === 'true' : todo.completed;
 
+    // Image Update
     if (req.files?.image?.[0]) {
       if (todo.imageUrl) await deleteFromCloudinary(todo.imageUrl);
       todo.imageUrl = await uploadToCloudinary(req.files.image[0].buffer, { resource_type: 'image' });
     }
+    // PDF Update
     if (req.files?.pdf?.[0]) {
       if (todo.pdfUrl) await deleteFromCloudinary(todo.pdfUrl);
       todo.pdfUrl = await uploadToCloudinary(req.files.pdf[0].buffer, { resource_type: 'raw' });
@@ -82,11 +88,12 @@ router.put('/:id', multiUpload, async (req, res) => {
     const updated = await todo.save();
     res.json(updated);
   } catch (err) {
+    console.error('PUT Todos Error:', err);
     res.status(400).json({ message: err.message });
   }
 });
 
-// DELETE
+// DELETE (Unchanged)
 router.delete('/:id', async (req, res) => {
   try {
     const todo = await Todo.findById(req.params.id);
@@ -98,6 +105,7 @@ router.delete('/:id', async (req, res) => {
     await Todo.deleteOne({ _id: req.params.id });
     res.json({ message: 'Deleted' });
   } catch (err) {
+    console.error('DELETE Todos Error:', err);
     res.status(500).json({ message: err.message });
   }
 });
