@@ -6,50 +6,61 @@ import { uploadToCloudinary, deleteFromCloudinary } from '../utils/cloudinary.js
 
 const router = express.Router();
 
-// GET all (unchanged)
+// GET all todos
 router.get('/', async (req, res) => {
   try {
     const todos = await Todo.find().sort({ createdAt: -1 });
     res.json(todos);
   } catch (err) {
-    console.error('GET Todos Error:', err);
-    res.status(500).json({ message: err.message });
+    console.error('GET /todos error:', err.message);
+    res.status(500).json({ message: 'Failed to fetch todos' });
   }
 });
 
-// POST (Fixed Upload with Logging)
+// POST - Create new todo
 router.post('/', multiUpload, async (req, res) => {
   try {
-    console.log('POST Request Files:', req.files); // Log for debug
-    console.log('POST Request Body:', req.body); // Log for debug
+    console.log('POST /todos - Files:', !!req.files?.image, !!req.files?.pdf);
+    console.log('POST /todos - Body:', req.body);
 
     const { text, dueDate, completed } = req.body;
-    if (!text) return res.status(400).json({ message: 'Text is required' });
-
-    let imageUrl = '', pdfUrl = '';
-
-    // Image Upload
-    if (req.files?.image?.[0]) {
-      console.log('Uploading Image:', req.files.image[0].originalname);
-      imageUrl = await uploadToCloudinary(req.files.image[0].buffer, {
-        resource_type: 'image',
-        allowed_formats: ['jpg', 'jpeg', 'png'],
-      });
-      console.log('Image Uploaded URL:', imageUrl);
+    if (!text?.trim()) {
+      return res.status(400).json({ message: 'Text is required' });
     }
 
-    // PDF Upload
-    if (req.files?.pdf?.[0]) {
-      console.log('Uploading PDF:', req.files.pdf[0].originalname);
-      pdfUrl = await uploadToCloudinary(req.files.pdf[0].buffer, {
+    let imageUrl = '';
+    let pdfUrl = '';
+
+    // === IMAGE UPLOAD ===
+    const imageFile = req.files?.image?.[0];
+    if (imageFile) {
+      console.log(`Uploading image: ${imageFile.originalname} (${imageFile.buffer?.length || 0} bytes)`);
+      if (!imageFile.buffer || imageFile.buffer.length === 0) {
+        return res.status(400).json({ message: 'Image file is empty or corrupted' });
+      }
+      imageUrl = await uploadToCloudinary(imageFile.buffer, {
+        resource_type: 'image',
+        allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
+      });
+      console.log('Image uploaded:', imageUrl);
+    }
+
+    // === PDF UPLOAD ===
+    const pdfFile = req.files?.pdf?.[0];
+    if (pdfFile) {
+      console.log(`Uploading PDF: ${pdfFile.originalname} (${pdfFile.buffer?.length || 0} bytes)`);
+      if (!pdfFile.buffer || pdfFile.buffer.length === 0) {
+        return res.status(400).json({ message: 'PDF file is empty or corrupted' });
+      }
+      pdfUrl = await uploadToCloudinary(pdfFile.buffer, {
         resource_type: 'raw',
         allowed_formats: ['pdf'],
       });
-      console.log('PDF Uploaded URL:', pdfUrl);
+      console.log('PDF uploaded:', pdfUrl);
     }
 
     const todo = new Todo({
-      text,
+      text: text.trim(),
       dueDate: dueDate || null,
       imageUrl,
       pdfUrl,
@@ -57,56 +68,78 @@ router.post('/', multiUpload, async (req, res) => {
     });
 
     const saved = await todo.save();
+    console.log('Todo saved with ID:', saved._id);
     res.status(201).json(saved);
   } catch (err) {
-    console.error('POST Todos Error:', err);
-    res.status(400).json({ message: err.message });
+    console.error('POST /todos error:', err.message);
+    res.status(400).json({ message: err.message || 'Failed to create todo' });
   }
 });
 
-// PUT / UPDATE (Similar Fixes)
+// PUT - Update existing todo
 router.put('/:id', multiUpload, async (req, res) => {
   try {
     const todo = await Todo.findById(req.params.id);
-    if (!todo) return res.status(404).json({ message: 'Not found' });
+    if (!todo) return res.status(404).json({ message: 'Todo not found' });
 
-    todo.text = req.body.text ?? todo.text;
-    todo.dueDate = req.body.dueDate ?? todo.dueDate;
-    todo.completed = req.body.completed !== undefined ? req.body.completed === 'true' : todo.completed;
+    const { text, dueDate, completed } = req.body;
 
-    // Image Update
-    if (req.files?.image?.[0]) {
-      if (todo.imageUrl) await deleteFromCloudinary(todo.imageUrl);
-      todo.imageUrl = await uploadToCloudinary(req.files.image[0].buffer, { resource_type: 'image' });
+    // Update text fields
+    if (text?.trim()) todo.text = text.trim();
+    if (dueDate) todo.dueDate = dueDate;
+    if (completed !== undefined) todo.completed = completed === 'true';
+
+    // === IMAGE REPLACE ===
+    const imageFile = req.files?.image?.[0];
+    if (imageFile) {
+      if (todo.imageUrl) {
+        console.log('Deleting old image:', todo.imageUrl);
+        await deleteFromCloudinary(todo.imageUrl);
+      }
+      console.log(`Uploading new image: ${imageFile.originalname}`);
+      todo.imageUrl = await uploadToCloudinary(imageFile.buffer, { resource_type: 'image' });
     }
-    // PDF Update
-    if (req.files?.pdf?.[0]) {
-      if (todo.pdfUrl) await deleteFromCloudinary(todo.pdfUrl);
-      todo.pdfUrl = await uploadToCloudinary(req.files.pdf[0].buffer, { resource_type: 'raw' });
+
+    // === PDF REPLACE ===
+    const pdfFile = req.files?.pdf?.[0];
+    if (pdfFile) {
+      if (todo.pdfUrl) {
+        console.log('Deleting old PDF:', todo.pdfUrl);
+        await deleteFromCloudinary(todo.pdfUrl);
+      }
+      console.log(`Uploading new PDF: ${pdfFile.originalname}`);
+      todo.pdfUrl = await uploadToCloudinary(pdfFile.buffer, { resource_type: 'raw' });
     }
 
     const updated = await todo.save();
     res.json(updated);
   } catch (err) {
-    console.error('PUT Todos Error:', err);
-    res.status(400).json({ message: err.message });
+    console.error('PUT /todos error:', err.message);
+    res.status(400).json({ message: err.message || 'Failed to update todo' });
   }
 });
 
-// DELETE (Unchanged)
+// DELETE - Remove todo
 router.delete('/:id', async (req, res) => {
   try {
     const todo = await Todo.findById(req.params.id);
-    if (!todo) return res.status(404).json({ message: 'Not found' });
+    if (!todo) return res.status(404).json({ message: 'Todo not found' });
 
-    if (todo.imageUrl) await deleteFromCloudinary(todo.imageUrl);
-    if (todo.pdfUrl) await deleteFromCloudinary(todo.pdfUrl);
+    // Delete associated files
+    if (todo.imageUrl) {
+      console.log('Deleting image from Cloudinary:', todo.imageUrl);
+      await deleteFromCloudinary(todo.imageUrl);
+    }
+    if (todo.pdfUrl) {
+      console.log('Deleting PDF from Cloudinary:', todo.pdfUrl);
+      await deleteFromCloudinary(todo.pdfUrl);
+    }
 
     await Todo.deleteOne({ _id: req.params.id });
-    res.json({ message: 'Deleted' });
+    res.json({ message: 'Todo deleted successfully' });
   } catch (err) {
-    console.error('DELETE Todos Error:', err);
-    res.status(500).json({ message: err.message });
+    console.error('DELETE /todos error:', err.message);
+    res.status(500).json({ message: 'Failed to delete todo' });
   }
 });
 
