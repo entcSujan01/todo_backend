@@ -1,4 +1,4 @@
-// server.js – FINAL PRODUCTION VERSION
+// server.js
 import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
@@ -9,54 +9,101 @@ dotenv.config();
 
 const app = express();
 
-// ---------- CORS (Bulletproof) ----------
+// ---------- CORS (Production-Ready) ----------
+app.options('*', cors()); // Handle preflight for all routes
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      const allowedOrigins = [
+        process.env.CLIENT_URL,
+        'https://todo-frontend-bhpeytgu-entcsujan01s-projects.vercel.app', // Hardcoded fallback
+      ];
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.warn(`CORS blocked origin: ${origin}`);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
+    optionsSuccessStatus: 204,
+  })
+);
+
+// Fallback: Force headers (defense in depth)
 app.use((req, res, next) => {
-  const origin = process.env.CLIENT_URL || 'https://todo-frontend-ten-omega.vercel.app';
+  const origin = process.env.CLIENT_URL || 'https://todo-frontend-bhpeytgu-entcsujan01s-projects.vercel.app';
   res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
   if (req.method === 'OPTIONS') {
     return res.status(204).end();
   }
   next();
 });
 
-app.use(cors({
-  origin: process.env.CLIENT_URL || 'https://todo-frontend-ten-omega.vercel.app',
-  credentials: true,
-}));
-
 // ---------- Body Parser ----------
 app.use(express.json({ limit: '15mb' }));
 
-// ---------- DB ----------
+// ---------- DB Connection (Resilient) ----------
 let dbConnected = false;
 const connectDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGO_URI);
+    await mongoose.connect(process.env.MONGO_URI, {
+      serverSelectionTimeoutMS: 30000,
+      socketTimeoutMS: 45000,
+    });
     console.log('MongoDB connected');
     dbConnected = true;
   } catch (err) {
-    console.error('MongoDB error:', err);
+    console.error('MongoDB connection failed:', err.message);
     dbConnected = false;
+    // Don't exit – Vercel serverless can retry
   }
 };
+
 connectDB();
 
 // ---------- Routes ----------
 app.use('/api/todos', (req, res, next) => {
-  if (!dbConnected) return res.status(503).json({ error: 'DB not ready' });
+  if (!dbConnected) {
+    return res.status(503).json({ error: 'Database not ready' });
+  }
   next();
 }, todoRoutes);
 
-// ---------- Health ----------
+// ---------- Health Check ----------
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', db: dbConnected ? 'connected' : 'disconnected' });
+  res.json({
+    status: 'ok',
+    db: dbConnected ? 'connected' : 'disconnected',
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // ---------- 404 ----------
-app.use('*', (req, res) => res.status(404).json({ error: 'Not found' }));
+app.use('*', (req, res) => {
+  res.status(404).json({ error: 'Route not found' });
+});
 
-// ---------- Export for Vercel ----------
+// ---------- Global Error Handler ----------
+app.use((err, req, res, next) => {
+  console.error('Unhandled Error:', err);
+  res.status(500).json({ error: 'Internal Server Error' });
+});
+
+// ---------- Start Server (Vercel Serverless Export) ----------
+const PORT = process.env.PORT?.trim() || 5000;
+
+// For local dev
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
+
+// Export for Vercel
 export default app;
